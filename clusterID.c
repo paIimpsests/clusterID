@@ -71,7 +71,10 @@ double facs(int l, int m);
 double gammln(double xx);
 double minpow(int m);
 int* calc_conn(compl* orderp);
+void setcluss(int pn, compl* orderp, int cn);
 int calc_clusters(int* conn, compl* orderp);
+void saveLogBook(void);
+void saveDGndata(void);
 
 
 
@@ -110,6 +113,7 @@ double maxr2 = 0.0f;
 blistT *blist;
 int NNidMethod = 0;                     // [TUNABLE] choice of method for NN identification
 clusterBook* logBook = NULL;            // bookkeeping table for the clusters identified in the system
+int cs;                                 //cluster size
 // ensemble average
 // ----------------------
 double* Nn = NULL;                      // table for calculating the free energy of formation of a cluster of size n
@@ -388,7 +392,7 @@ void readCoords(FILE* initfile){
 
         // Populate table of particles data in standard units
         switch (filetype){
-                case 0:
+                case 0: ;
                         double rTemp = 0.0f;
                         for (int i = 0; i < N; i++){
                                 if (fscanf( initfile,
@@ -421,7 +425,7 @@ void readCoords(FILE* initfile){
                                 particles[i].type = 'a';
                         }
                         break;
-                case 1:
+                case 1: ;
                         double maxL = -1.0f;
                         for (int i = 0; i < N; i++){
                                 if (fscanf(initfile, "%*s %lf %lf %lf", &particles[i].x, &particles[i].y, &particles[i].z) != 3){
@@ -627,13 +631,6 @@ int findClusters(void){
         int maxclus;     
         build_nblist(NNidMethod);
         order = calc_order();
-        // Repeated analysis for multiple nbnd_cutof values
-        //nbnd_cutoff = 5;
-        //for (int nbnd = 0; nbnd < 10; nbnd++){
-        //        nbnd_cutoff += nbnd;
-        //        connections = calc_conn(order);
-        //        maxclus = calc_clusters(connections, order, nbnd);
-        //}
         connections = calc_conn(order);
         maxclus = calc_clusters(connections, order);
         return maxclus;
@@ -1120,6 +1117,35 @@ int* calc_conn(compl* orderp){
 
 
 
+void setcluss(int pn, compl* orderp, int cn){
+/* Function:    setcluss
+ * ---------------------
+ * Identifies cluster from potential solid-like particles in the list of NN
+ */
+        const int l = 6;
+        cluss[pn] = cn;
+        for(int jj = 0; jj < blist[pn].n; jj++){
+                int tmp = blist[pn].bnd[jj].n;
+                if(conn[tmp] != 0
+                   && cluss[tmp] == 0
+                   && dotprod(orderp + pn * (2 * l + 1), orderp + tmp * (2 * l + 1), l) > obnd_cutoff
+                   ){
+                //if(particle tmp is solid-like
+                //   && particle tmp does not yet belong to a cluster
+                //   && the dot product between q6(tmp) and q6(pn) > obnd_cutoff
+                //   )
+                //obnd_cutoff = 0.9 gives nice results
+                //obnd_cutoff = 0 gives all touching nuclei as one big nuclei
+                        cs++; //cluster size goes up
+                        particles[tmp].clusterindex = cn;
+                        setcluss(tmp, orderp, cn);
+                }  
+        }
+        if (highlightAll && conn[pn] == 1) particles[pn].type = 'a' + cn%27;
+}
+
+
+
 int calc_clusters(int* conn, compl* orderp){
 /* Function:   calc_clusters
  * -------------------------
@@ -1132,35 +1158,11 @@ int calc_clusters(int* conn, compl* orderp){
  *              system
  */
         // VARIABLES
-        int cs;                 //cluster size
         int cn = 1;             //cluster id number
         int big = 0;            //largest cluster size
         int bc = -1;            //largest cluster id number
         int unread = 1;
-        const int l = 6;
-        
-        // FUNCTIONS
-        void setcluss(int pn){
-                cluss[pn] = cn;
-                for(int jj = 0; jj < blist[pn].n; jj++){
-                        int tmp = blist[pn].bnd[jj].n;
-                        if(conn[tmp] != 0
-                           && cluss[tmp] == 0
-                           && dotprod(orderp + pn * (2 * l + 1), orderp + tmp * (2 * l + 1), l) > obnd_cutoff
-                           ){
-                        //if(particle tmp is solid-like
-                        //   && particle tmp does not yet belong to a cluster
-                        //   && the dot product between q6(tmp) and q6(pn) > obnd_cutoff
-                        //   )
-                        //obnd_cutoff = 0.9 gives nice results
-                        //obnd_cutoff = 0 gives all touching nuclei as one big nuclei
-                                cs++; //cluster size goes up
-                                particles[tmp].clusterindex = cn;
-                                setcluss(tmp);
-                        }  
-                }
-                if (highlightAll && conn[pn] == 1) particles[pn].type = 'a' + cn%27;
-        }
+
 
         // BODY
         for(int i = 0; i < N; i++){
@@ -1173,7 +1175,7 @@ int calc_clusters(int* conn, compl* orderp){
                 if(conn[i] == 1 && cluss[i] == 0){
                 //if(particle i is solid-like && particle i does not yet belong to a cluster)
                         cs++;
-                        setcluss(i); 
+                        setcluss(i, orderp, cn); 
                         size[cn] = cs;
                         if(cs > big){
                         //identifies largest cluster
@@ -1192,10 +1194,6 @@ int calc_clusters(int* conn, compl* orderp){
                         if (particles[i].clusterindex == bc)
                                 particles[i].type = 'b';        
                 }
-        }
-
-        if (savelogs){
-
         }
         
         logBook->bookmark = 0;
