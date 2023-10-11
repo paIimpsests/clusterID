@@ -88,6 +88,7 @@ int N = 2000;                           // [READ FROM IMPUT] number of particles
 double L = 0.0f;                        // [READ FROM INPUT] reduced box size
 double sigma = 1.0f;                    // unit of length = 1 = max particle size
 Particle *particles = NULL;             // [READ FROM INPUT] pointer to the table of particles data
+int PBC = 1;                            // [TUNABLE] [-p] choice to use periodic boundary conditions for analysis, default is yes (1)
 // cell lists
 // -----------------------
 Particle **CLTable = NULL;
@@ -130,6 +131,7 @@ int highlightAll = 1;                   // [TUNABLE] [-L] choice to highlight al
 int snapshot_count = 0;                 // count for the number of read snapshots
 int savelogs = 0;                       // [TUNABLE] [-l] choice to save logs
 int energy = 0;                         // [TUNABLE] [-G] choice to calculate free energy to create a nucleus of size n
+int save_movie = 1;                     // [TUNABLE] [-M] choice to save the movie of clusters, default is yes (1)
 
 
 
@@ -233,44 +235,46 @@ int parse_input(int argc, char* argv[]){
  */
         // Parsing of command line arguments
 	struct option longopt[] = {
-                {"bnd-cutoff",required_argument,NULL,'b'},
-                {"nbnd-cutoff",required_argument,NULL,'n'},
-                {"obnd-cutoff",required_argument,NULL,'o'},
-                {"rc",required_argument,NULL,'r'},
-                {"highlight-all",no_argument,NULL,'L'},
-                {"filetype",required_argument,NULL,'f'},
-                {"NN-method",required_argument,NULL,'m'},
-                {"save-logs",no_argument,NULL,'l'},
-                {"DGn",no_argument,NULL,'G'},
+        {"bnd-cutoff",required_argument,NULL,'b'},
+        {"nbnd-cutoff",required_argument,NULL,'n'},
+        {"obnd-cutoff",required_argument,NULL,'o'},
+        {"rc",required_argument,NULL,'r'},
+        {"highlight-all",no_argument,NULL,'L'},
+        {"filetype",required_argument,NULL,'f'},
+        {"NN-method",required_argument,NULL,'m'},
+        {"save-logs",no_argument,NULL,'l'},
+        {"DGn",no_argument,NULL,'G'},
+        {"save-movie",required_argument,NULL,'M'},
+        {"PBC",required_argument,NULL,'p'},
 		{"help",no_argument,NULL,'h'},
 		{0,0,0,0}
         };
 
         int c;
-        while ((c = getopt_long(argc, argv, "b:n:o:r:Lf:m:lGh", longopt, NULL)) != -1){
+        while ((c = getopt_long(argc, argv, "b:n:o:r:Lf:m:lGM:p:h", longopt, NULL)) != -1){
                 switch (c){
                         case 'b':
                                 if (sscanf(optarg, "%lf", &bnd_cutoff) != 1){
                                         printf("[clusterID] Could not parse bnd_cutoff value.\n");
-                                        exit(0);
+                                        exit(3);
                                 }
                                 break;
                         case 'n':
                                 if (sscanf(optarg, "%d", &nbnd_cutoff) != 1){
                                         printf("[clusterID] Could not parse nbnd_cutoff value.\n");
-                                        exit(0);
+                                        exit(3);
                                 }
                                 break;
                         case 'o':
                                 if (sscanf(optarg, "%lf", &obnd_cutoff) != 1){
                                         printf("[clusterID] Could not parse obnd_cutoff value.\n");
-                                        exit(0);
+                                        exit(3);
                                 }
                                 break;
                         case 'r':
                                 if (sscanf(optarg, "%lf", &bndLength) != 1){
                                         printf("[clusterID] Could not parse bndLength value.\n");
-                                        exit(0);
+                                        exit(3);
                                 }
                                 NNidMethod = 2;
                                 break;
@@ -280,13 +284,13 @@ int parse_input(int argc, char* argv[]){
                         case 'f':
                                 if (sscanf(optarg, "%d", &filetype) != 1){
                                         printf("[clusterID] Could not parse filetype.\n");
-                                        exit(0);
+                                        exit(3);
                                 }
                                 break;
                         case 'm':
                                 if (sscanf(optarg, "%d", &NNidMethod) != 1){
                                         printf("[clusterID] Could not parse NNidMethod.\n");
-                                        exit(0);
+                                        exit(3);
                                 }
                                 break;
                         case 'l':
@@ -295,8 +299,19 @@ int parse_input(int argc, char* argv[]){
                         case 'G':
                                 energy = 1;
                                 break;
+                        case 'M':
+                                if (sscanf(optarg, "%d", &save_movie) != 1) {
+                                        printf("[clusterID] Could not parse choice to save cluster movie.\n");
+                                        exit(3);
+                                }
+                        case 'p':
+                                if (sscanf(optarg, "%d", &PBC) != 1) {
+                                        printf("[clusterID] Could not parse choice to use PBC in analysis.\n");
+                                        exit(3);
+                                }
+                                break;
                         case 'h':
-                                printf("[clusterID]\n * Usage: ./clusterID [OPTIONS] SOURCE\n * Description: identifies clusters based on the choice of parameters / method and writes a .sph file were they are highlighted.\n * Options:\n * -b [double]: ten Wolde's local orientational order parameter dot-product cutoff for two particles to be identified as connected\n * -n [int]: number of connections cutoff for a particle to be identified as solid-like\n * -o [double]: ten Wolde's local orientational order parameter dot-product cutoff for two particles to be identified as part of the same cluster\n * -r [double]: radius cutoff for Nearest Neighbours (NN) identification. Automatically triggers choice of cutoff radius method for NN identification\n * -L: only highlights the largest identified cluster\n * -f [int]: choice of SOURCE file type among:\n *           0 for .sph files\n *           1 for .xyz files (default)\n * -m [int]: choice of NN identification method among:\n *           0 for SANN method (default)\n *           1 for 12NN method\n *           2 for cutoff radius method\n * -l: saves cluster logs to a file\n * -G: calculates free energy for the formation of a cluster of size n, saves it to a file\n * -h: displays this message and exit\n");
+                                printf("[clusterID]\n * Usage: ./clusterID [OPTIONS] SOURCE\n * Description: identifies clusters based on the choice of parameters / method and writes a .sph file were they are highlighted.\n * Options:\n * -b [double]: ten Wolde's local orientational order parameter dot-product cutoff for two particles to be identified as connected\n * -n [int]: number of connections cutoff for a particle to be identified as solid-like\n * -o [double]: ten Wolde's local orientational order parameter dot-product cutoff for two particles to be identified as part of the same cluster\n * -r [double]: radius cutoff for Nearest Neighbours (NN) identification. Automatically triggers choice of cutoff radius method for NN identification\n * -L: only highlights the largest identified cluster\n * -f [int]: choice of SOURCE file type among:\n *           0 for .sph files\n *           1 for .xyz files (default)\n * -m [int]: choice of NN identification method among:\n *           0 for SANN method (default)\n *           1 for 12NN method\n *           2 for cutoff radius method\n * -l: saves cluster logs to a file\n * -G: calculates free energy for the formation of a cluster of size n, saves it to a file\n * -M: choice to save the movie of clusters (default is 1)\n * -p: use PBC for analysis (default is 1)\n * -h: displays this message and exit\n");
                                 exit(0);
                 }
         }
@@ -435,7 +450,9 @@ void readCoords(FILE* initfile){
                                         rTemp = particles[i].r;
                         }
                         // Rescale everything w.r.t. larger particle size to obtain the
-                        // expected sigma = 1, also converts to reduced units and applies PBC
+                        // expected sigma = 1, also converts to reduced units and puts
+                        // particles back in box (whether or not PBC are used in the 
+                        // following analysis)
                         L /= (2.0f * rTemp);
                         for (int i = 0; i < N; i++){
                                 particles[i].x /= (2.0f * rTemp);
@@ -704,6 +721,7 @@ void build_nblist(int method){
                 for (int i = a-2; i < a+3; i++){
                         for (int j = b-2; j < b+3; j++){
                                 for (int k = c-2; k < c+3; k++){
+                                        if ((!PBC) && ((i > nCell1D) || (i < 0) || (j > nCell1D) || (j < 0) || (k > nCell1D) || (k < 0))) continue;
                                         cellIndex = retrieveIndex(i,j,k);
                                         current = CLTable[cellIndex];
                                         while (current != NULL && numposnb <= N){
@@ -751,7 +769,7 @@ void build_nblist(int method){
                                         if (rim > neighbours[m].dist) {m++;}
                                         else {done = 1;}
                                         if (m > numposnb){ 
-                                                printf("NN algorithm did not converge!\n");
+                                                printf("[clusterID] NN algorithm did not converge!\n");
                                                 m--;
                                                 done = 1;
                                         }
@@ -1322,19 +1340,21 @@ int main(int argc, char *argv[])
 
 
         // OUTPUT
-        if (sprintf(movie_filename, "./movie.sph") < 0){
-                printf("[clusterID] Could not write string. Exit.\n");
-                exit(0);
+        if (save_movie) {
+                if (sprintf(movie_filename, "./movie.sph") < 0){
+                        printf("[clusterID] Could not write string. Exit.\n");
+                        exit(0);
+                }
+                FILE* writefile = fopen(movie_filename, "w+");
+                if (writefile != NULL){fclose(writefile);}
         }
-        FILE* writefile = fopen(movie_filename, "w+");
-        if (writefile != NULL){fclose(writefile);}
 
         if (savelogs){
                 if (sprintf(clusterlog_filename, "./logs.txt") < 0){
                         printf("[clusterID] Could not write string. Exit.\n");
                         exit(0);
                 }
-                writefile = fopen(clusterlog_filename, "w+");
+                FILE* writefile = fopen(clusterlog_filename, "w+");
                 if (writefile != NULL){fclose(writefile);}
         }
 
@@ -1343,7 +1363,7 @@ int main(int argc, char *argv[])
                         printf("[clusterID] Could not write string. Exit.\n");
                         exit(0);
                 }
-                writefile = fopen(DGndata_filename, "w+");
+                FILE* writefile = fopen(DGndata_filename, "w+");
                 if (writefile != NULL){fclose(writefile);}
         }
 
@@ -1357,7 +1377,7 @@ int main(int argc, char *argv[])
                         readCoords(initfile);
                         buildCL(1);
                         findClusters();
-                        writeCoords(movie_filename, 1);
+                        if (save_movie) writeCoords(movie_filename, 1);
                         if (savelogs) saveLogBook();
                         // Freeing allocated memory before allocating again
                         free(particles);
@@ -1373,13 +1393,15 @@ int main(int argc, char *argv[])
                         free(logBook);
                 }
         }
+        fclose(initfile);
         if (energy) saveDGndata();
 
        
 
         // END
         free(Nn);
-        printf("[clusterID] Program terminated normally\n * Read snapshots:\t%d\n * Produced:\t\t%s\n", snapshot_count, movie_filename);
+        printf("[clusterID] Program terminated normally\n * Read snapshots:\t%d\n", snapshot_count);
+        if (save_movie) printf(" * Produced\t\t%s\n", movie_filename);
         if (savelogs) printf(" * Produced\t\t%s\n", clusterlog_filename);
         if (energy) printf(" * Produced\t\t%s\n", DGndata_filename);
         //  CPU TIME MEASUREMENT | END
