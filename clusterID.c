@@ -105,7 +105,7 @@ int* size = NULL;
 double bndLength = 1.4f;                // [TUNABLE] [-r] distance cutoff for bonds, if used
 double bnd_cutoff = 0.7f;               // [TUNABLE] [-b] dot product cutoff to be call a connected particle
                                         // `c` in ten Wolde's work (`c=0.5`), `d_c` in Filion's work (`d_c=0.7`)
-int nbnd_cutoff = 7;                    // [TUNABLE] [-n] minimum number of connected particles to be called a crystaline particle
+int nbnd_cutoff = 4;                    // [TUNABLE] [-n] minimum number of connected particles to be called a crystaline particle
                                         // `nc` in ten Wolde's work (`nc=?`), `xi_c` in Filion's work (`4<xi_c<10`)
 double obnd_cutoff = 0.0f;              // [TUNABLE] [-o] dot product cutoff to be in the same cluster
                                         // additional criterion for cluster identification: =0 for all touching clusters, =0.9 to see defects
@@ -125,7 +125,7 @@ char clusterlog_filename[200];          // name of the clusters log output file
 char DGndata_filename[200];             // name of the DGn data output file
 long cursor_end;                        // position of the EOF for the input SOURCE file
 long cursor_current;                    // current reading position in the input SOURCE file
-int filetype = 1;                       // [TUNABLE] input file type: 0 is for standard .sph, 1 is for .xyz datafiles
+int filetype = 0;                       // [TUNABLE] input file type: 0 is for standard .sph, 1 is for .xyz datafiles
 int highlightAll = 1;                   // [TUNABLE] [-L] choice to highlight all found clusters (1) or largest found cluster only (0)
 int snapshot_count = 0;                 // count for the number of read snapshots
 int savelogs = 0;                       // [TUNABLE] [-l] choice to save logs
@@ -331,6 +331,16 @@ void initReading(FILE* initfile){
 
 
 
+int mygetline(char* str, FILE* f) {
+        int comment = 1;
+        while (comment) {
+                if (!fgets(str, 255, f)) return -1;
+                if (str[0] != '#') comment = 0;
+        }
+        return 0;
+}
+
+
 void readCoords(FILE* initfile){
 /* Function:    readCoords
  * -----------------------
@@ -340,16 +350,26 @@ void readCoords(FILE* initfile){
  *
  * *initfile:   pointer to the supplied SOURCE file
  */
+        char buffer[255];
+        int ftmp;
         // Initialization of the number of particles N
         switch (filetype){
                 case 0:
-                        if (fscanf(initfile, "%*c%d%*c", &N) != 1){
-                                printf("[findClusters] Error: could not parse input file. Check filetype.\n");
-                                exit(0);
-                        }
+//                      if (fscanf(initfile, "%*c%d\n", &N) != 1) {
+//                              if (fscanf(initfile, "%d\n", &N) != 1) {
+//                              printf("[findClusters] Error: could not parse input file. Check filetype.\n");
+//                              exit(0);
+//                              }
+//                      }
+//                      printf("N = %d\n", N);
+                        mygetline(buffer,initfile);
+//                      printf("%s\n", buffer);
+                        ftmp = sscanf(buffer, "%d\n", &N);
+                        if (ftmp != 1) {printf("Error!\n"); exit(3);}
+//                      printf("N = %d\n", N);
                         break;
                 case 1:
-                        if (fscanf(initfile, "%d%*c", &N) != 1){
+                        if (fscanf(initfile, "%d%*c", &N) != 1) {
                                 printf("[findClusters] Error: could not parse input file. Check filetype.\n");
                                 exit(0);
                         }
@@ -403,8 +423,12 @@ void readCoords(FILE* initfile){
                                             &particles[i].z,
                                             &particles[i].r
                                           )
-                                    != 5)
-                                        exit(0);
+                                                != 5) {
+                                        if (fscanf(initfile, "%c %lf  %lf  %lf  %lf%*c", &particles[i].type, &particles[i].x, &particles[i].y, &particles[i].z, &particles[i].r) != 5) {
+                                                printf("error -1\n");
+                                                exit(0);
+                                        }
+                                }
                                 // Find larger radius to rescale everything to obtain
                                 // the expected sigma = 1 for the (larger) particle size
                                 if (particles[i].r > rTemp)
