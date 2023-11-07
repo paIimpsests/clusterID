@@ -1,4 +1,4 @@
-/* Ckuster identification routine based on ten Wolde's local orientational
+/* Cluster identification routine based on ten Wolde's local orientational
  * order parameter analysis
  */
 
@@ -56,7 +56,7 @@ typedef struct clusterBook clusterBook;
 int parse_input(int argc, char* argv[]);
 void initReading(FILE* initfile);
 void readCoords(FILE* initfile);
-void writeCoords(char *filename, int fluidlike);
+void writeCoords(char *filename, int fluidlike, int snap);
 int buildCL(int usecase);
 int retrieveIndex(int u, int v, int w);
 int findClusters(void);
@@ -85,15 +85,21 @@ void saveDGndata(void);
 // hard spheres system
 // ----------------------
 int N = 2000;                           // [READ FROM IMPUT] number of particles in the system
-double L = 0.0f;                        // [READ FROM INPUT] reduced box size
+double boxx = 0.0f;
+double boxy = 0.0f;
+double boxz = 0.0f;
 double sigma = 1.0f;                    // unit of length = 1 = max particle size
 Particle *particles = NULL;             // [READ FROM INPUT] pointer to the table of particles data
 int PBC = 1;                            // [TUNABLE] [-p] choice to use periodic boundary conditions for analysis, default is yes (1)
 // cell lists
 // -----------------------
 Particle **CLTable = NULL;
-double sCell1D = 0.0f;
-int nCell1D = 0;
+double sCellx = 0.0f;
+int nCellx = 0;
+double sCelly = 0.0f;
+int nCelly = 0;
+double sCellz = 0.0f;
+int nCellz = 0;
 int nCell = 0;
 // bop
 // ----------------------
@@ -126,13 +132,14 @@ char clusterlog_filename[200];          // name of the clusters log output file
 char DGndata_filename[200];             // name of the DGn data output file
 long cursor_end;                        // position of the EOF for the input SOURCE file
 long cursor_current;                    // current reading position in the input SOURCE file
-int filetype = 0;                       // [TUNABLE] input file type: 0 is for standard .sph, 1 is for .xyz datafiles
+int input_filetype = 0;                 // [TUNABLE] [-f] input file type: 0 is for standard .sph, 1 is for .xyz datafiles
+int output_filetype = 0;                // [TUNABLE] [-F] output file type: 0 is for standard .sph, 1 is for .xyz
 int highlightAll = 1;                   // [TUNABLE] [-L] choice to highlight all found clusters (1) or largest found cluster only (0)
 int snapshot_count = 0;                 // count for the number of read snapshots
 int savelogs = 0;                       // [TUNABLE] [-l] choice to save logs
 int energy = 0;                         // [TUNABLE] [-G] choice to calculate free energy to create a nucleus of size n
 int save_movie = 1;                     // [TUNABLE] [-M] choice to save the movie of clusters, default is yes (1)
-
+int snap_count = 0;                     // snapshot counter
 
 
 
@@ -145,15 +152,15 @@ struct Particle{
  * Particle in the system, implemented for the use of cell lists (CL)
  */
 	double x;               // reduced x coordinate 
-	double y;	        // reduced y coordinate
-        double z;               // reduced z coordinate
-	double r;	        // reduced radius --- redundant with sigma ... might remove later on
-        char type;              // particle type --- for visualization purposes only
-        Particle *next;         // pointer to the next particle in CL
-        Particle *prev;         // pointer to the previous particle in CL
-        int CLindex;            // index of CL in which particle is
-        int index;              // index of the particle, in [0;N-1]
-        int clusterindex;       // index of the cluster the particle belongs to; 0 if fluidlike
+	double y;	            // reduced y coordinate
+    double z;               // reduced z coordinate
+	double r;	            // reduced radius --- redundant with sigma ... might remove later on
+    char type;              // particle type --- for visualization purposes only
+    Particle *next;         // pointer to the next particle in CL
+    Particle *prev;         // pointer to the previous particle in CL
+    int CLindex;            // index of CL in which particle is
+    int index;              // index of the particle, in [0;N-1]
+    int clusterindex;       // index of the cluster the particle belongs to; 0 if fluidlike
 };
 
 
@@ -163,8 +170,8 @@ struct compl{
  * -----------------
  * Complex number
  */
-        double re;              // real part
-        double im;              // imaginary part
+    double re;              // real part
+    double im;              // imaginary part
 };
 
 
@@ -174,10 +181,10 @@ struct bndT{
  * ---------------
  * Geometrical information about the bond between two neighbouring particles
  */
-        double nz;
-        double si;
-        double co;
-        int n;
+    double nz;
+    double si;
+    double co;
+    int n;
 };
 
 
@@ -187,8 +194,8 @@ struct blistT{
  * ------------------
  * List of particles connected to particles i
  */
-        int n;                  // number of particles connected to particle i
-        bndT * bnd;             // description of the bond connecting particle j to particle i
+    int n;                  // number of particles connected to particle i
+    bndT * bnd;             // description of the bond connecting particle j to particle i
 };
 
 
@@ -198,11 +205,11 @@ struct posnb{
  * ------------------
  * List and info about the NN of a given partice
  */
-        Particle* part;         // pointer to a NN particle
-        double dist;            // distance between the two particles
-        double dx;              // x-axis distance between the two particles
-        double dy;              // y-axis distance between the two particles              
-        double dz;              // z-axis distance between the two particles
+    Particle* part;         // pointer to a NN particle
+    double dist;            // distance between the two particles
+    double dx;              // x-axis distance between the two particles
+    double dy;              // y-axis distance between the two particles              
+    double dz;              // z-axis distance between the two particles
 };
 
 
@@ -212,9 +219,9 @@ struct clusterBook{
  * ------------------------
  * Bookkeeping for the clusters identified in the system
  */
-        int bookmark;           // number of cluster sizes identified
-        int* size;              // size of the identified cluster
-        int* qt;                // number of identified clusters of a given size
+    int bookmark;           // number of cluster sizes identified
+    int* size;              // size of the identified cluster
+    int* qt;                // number of identified clusters of a given size
 };
 
 
@@ -240,7 +247,8 @@ int parse_input(int argc, char* argv[]){
         {"obnd-cutoff",required_argument,NULL,'o'},
         {"rc",required_argument,NULL,'r'},
         {"highlight-all",no_argument,NULL,'L'},
-        {"filetype",required_argument,NULL,'f'},
+        {"input-filetype",required_argument,NULL,'f'},
+        {"output-filetype",required_argument,NULL,'F'},
         {"NN-method",required_argument,NULL,'m'},
         {"save-logs",no_argument,NULL,'l'},
         {"DGn",no_argument,NULL,'G'},
@@ -251,7 +259,7 @@ int parse_input(int argc, char* argv[]){
         };
 
         int c;
-        while ((c = getopt_long(argc, argv, "b:n:o:r:Lf:m:lGM:p:h", longopt, NULL)) != -1){
+        while ((c = getopt_long(argc, argv, "b:n:o:r:Lf:F:m:lGM:p:h", longopt, NULL)) != -1){
                 switch (c){
                         case 'b':
                                 if (sscanf(optarg, "%lf", &bnd_cutoff) != 1){
@@ -282,8 +290,14 @@ int parse_input(int argc, char* argv[]){
                                 highlightAll = 0;
                                 break;
                         case 'f':
-                                if (sscanf(optarg, "%d", &filetype) != 1){
-                                        printf("[clusterID] Could not parse filetype.\n");
+                                if (sscanf(optarg, "%d", &input_filetype) != 1){
+                                        printf("[clusterID] Could not parse input_filetype.\n");
+                                        exit(3);
+                                }
+                                break;
+                        case 'F':
+                                if (sscanf(optarg, "%d", &output_filetype) != 1){
+                                        printf("[clusterID] Could not parse output_filetype.\n");
                                         exit(3);
                                 }
                                 break;
@@ -311,7 +325,7 @@ int parse_input(int argc, char* argv[]){
                                 }
                                 break;
                         case 'h':
-                                printf("[clusterID]\n * Usage: ./clusterID [OPTIONS] SOURCE\n * Description: identifies clusters based on the choice of parameters / method and writes a .sph file were they are highlighted.\n * Options:\n * -b [double]: ten Wolde's local orientational order parameter dot-product cutoff for two particles to be identified as connected\n * -n [int]: number of connections cutoff for a particle to be identified as solid-like\n * -o [double]: ten Wolde's local orientational order parameter dot-product cutoff for two particles to be identified as part of the same cluster\n * -r [double]: radius cutoff for Nearest Neighbours (NN) identification. Automatically triggers choice of cutoff radius method for NN identification\n * -L: only highlights the largest identified cluster\n * -f [int]: choice of SOURCE file type among:\n *           0 for .sph files\n *           1 for .xyz files (default)\n * -m [int]: choice of NN identification method among:\n *           0 for SANN method (default)\n *           1 for 12NN method\n *           2 for cutoff radius method\n * -l: saves cluster logs to a file\n * -G: calculates free energy for the formation of a cluster of size n, saves it to a file\n * -M: choice to save the movie of clusters (default is 1)\n * -p: use PBC for analysis (default is 1)\n * -h: displays this message and exit\n");
+                                printf("[clusterID]\n * Usage: ./clusterID [OPTIONS] SOURCE\n * Description: identifies clusters based on the choice of parameters / method and writes a .sph file were they are highlighted.\n * Options:\n * -b [double]: ten Wolde's local orientational order parameter dot-product cutoff for two particles to be identified as connected\n * -n [int]: number of connections cutoff for a particle to be identified as solid-like\n * -o [double]: ten Wolde's local orientational order parameter dot-product cutoff for two particles to be identified as part of the same cluster\n * -r [double]: radius cutoff for Nearest Neighbours (NN) identification. Automatically triggers choice of cutoff radius method for NN identification\n * -L: only highlights the largest identified cluster\n * -f [0 or 1]: choice of SOURCE file type among:\n *           0 for .sph files (default)\n *           1 for .xyz files\n * -F [0 or 1]: choice of OUTPUT file type, choice is the same as -f (default if 0 for .sph format)\n * -m [0 or 1 or 2]: choice of NN identification method among:\n *           0 for SANN method (default)\n *           1 for 12NN method\n *           2 for cutoff radius method\n * -l: saves cluster logs to a file\n * -G: calculates free energy for the formation of a cluster of size n, saves it to a file\n * -M [0 or 1]: choice to save the movie of clusters (default is 1)\n * -p [0 or 1]: use PBC for analysis (default is 1)\n * -h: displays this message and exit\n");
                                 exit(0);
                 }
         }
@@ -319,7 +333,9 @@ int parse_input(int argc, char* argv[]){
         // Wrong usage
         if(optind>argc-1){
 		printf("[clusterID] Usage: ./clusterID [OPTIONS] SOURCE\n [clusterID] Help: ./clusterID -h\n");
-		exit(0);
+		
+        if (input_filetype == 1) PBC = 0;
+        exit(0);
 	}
         
         // Reading input SOURCE filename
@@ -368,29 +384,20 @@ void readCoords(FILE* initfile){
         char buffer[255];
         int ftmp;
         // Initialization of the number of particles N
-        switch (filetype){
+        switch (input_filetype){
                 case 0:
-//                      if (fscanf(initfile, "%*c%d\n", &N) != 1) {
-//                              if (fscanf(initfile, "%d\n", &N) != 1) {
-//                              printf("[findClusters] Error: could not parse input file. Check filetype.\n");
-//                              exit(0);
-//                              }
-//                      }
-//                      printf("N = %d\n", N);
                         mygetline(buffer,initfile);
-//                      printf("%s\n", buffer);
                         ftmp = sscanf(buffer, "%d\n", &N);
                         if (ftmp != 1) {printf("Error!\n"); exit(3);}
-//                      printf("N = %d\n", N);
                         break;
                 case 1:
                         if (fscanf(initfile, "%d%*c", &N) != 1) {
-                                printf("[findClusters] Error: could not parse input file. Check filetype.\n");
+                                printf("[findClusters] Error: could not parse input file. Check input filetype.\n");
                                 exit(0);
                         }
                         break;
                 default:
-                        printf("[findClusters] Error: wrong filetype specified.\n");
+                        printf("[findClusters] Error: wrong input filetype specified.\n");
                         exit(0);
         }
         // Memory allocations
@@ -416,9 +423,9 @@ void readCoords(FILE* initfile){
         }
 
         // Read 2nd line
-        switch (filetype){
+        switch (input_filetype){
                 case 0:
-                        if (fscanf(initfile, "%lf %*f %*f%*c", &L) != 1) {printf("error here 0\n"); exit(0);}
+                        if (fscanf(initfile, "%lf %lf %lf%*c", &boxx, &boxy, &boxz) != 3) {printf("error here 0\n"); exit(0);}
                         break;
                 case 1:
                         if (fscanf(initfile, "%*s") != 0) {printf("error here 1\n"); exit(0);}
@@ -426,7 +433,7 @@ void readCoords(FILE* initfile){
         }
 
         // Populate table of particles data in standard units
-        switch (filetype){
+        switch (input_filetype){
                 case 0: ;
                         double rTemp = 0.0f;
                         for (int i = 0; i < N; i++){
@@ -453,21 +460,28 @@ void readCoords(FILE* initfile){
                         // expected sigma = 1, also converts to reduced units and puts
                         // particles back in box (whether or not PBC are used in the 
                         // following analysis)
-                        L /= (2.0f * rTemp);
+                        boxx /= (2.0f * rTemp);
+                        boxy /= (2.0f * rTemp);
+                        boxz /= (2.0f * rTemp);
                         for (int i = 0; i < N; i++){
                                 particles[i].x /= (2.0f * rTemp);
                                 particles[i].y /= (2.0f * rTemp);
                                 particles[i].z /= (2.0f * rTemp);
                                 particles[i].r = rTemp;
                                 particles[i].index = i;
-                                particles[i].x = fmod(particles[i].x + 2 * L, L);
-                                particles[i].y = fmod(particles[i].y + 2 * L, L);
-                                particles[i].z = fmod(particles[i].z + 2 * L, L);
+                                particles[i].x = fmod(particles[i].x + 2 * boxx, boxx);
+                                particles[i].y = fmod(particles[i].y + 2 * boxy, boxy);
+                                particles[i].z = fmod(particles[i].z + 2 * boxz, boxz);
                                 particles[i].type = 'a';
                         }
                         break;
                 case 1: ;
-                        double maxL = -1.0f;
+                        double boxxmin = 100.0f;
+                        double boxxmax = 0.0f;
+                        double boxymin = 100.0f;
+                        double boxymax = 0.0f;
+                        double boxzmin = 100.0f;
+                        double boxzmax = 0.0f;
                         for (int i = 0; i < N; i++){
                                 if (fscanf(initfile, "%*s %lf %lf %lf", &particles[i].x, &particles[i].y, &particles[i].z) != 3){
                                         printf("error here 2\n");
@@ -479,12 +493,22 @@ void readCoords(FILE* initfile){
                                 particles[i].index = i;
                                 //printf("%d\n", particles[i].index);
                                 // Attempt to determine boxsize
-                                if (particles[i].x > maxL) {maxL = particles[i].x;}
-                                if (particles[i].y > maxL) {maxL = particles[i].y;}
-                                if (particles[i].z > maxL) {maxL = particles[i].z;}
+                                if (particles[i].x < boxxmin) {boxxmin = particles[i].x;}
+                                if (particles[i].x > boxxmax) {boxxmax = particles[i].x;}
+                                if (particles[i].y < boxymin) {boxymin = particles[i].y;}
+                                if (particles[i].y > boxymax) {boxymax = particles[i].y;}
+                                if (particles[i].z < boxzmin) {boxzmin = particles[i].z;}
+                                if (particles[i].z > boxzmax) {boxzmax = particles[i].z;}
                         }
-                        // Make boxsize larger than it should be to avoid PBC/unwanted CL behavior
-                        L = maxL + 5.0f;
+                        boxx = boxxmax - boxxmin;
+                        boxy = boxymax - boxymin;
+                        boxz = boxzmax - boxzmin;
+                        for (int i = 0; i < N; i++) {
+                            Particle* p = &(particles[i]);
+                            p->x -= boxxmin;
+                            p->y -= boxymin;
+                            p->z -= boxzmin;
+                        }
                         break;
         }
         // Counts the number of read snapshots
@@ -495,7 +519,7 @@ void readCoords(FILE* initfile){
 
 
 
-void writeCoords(char *filename, int fluidlike){
+void writeCoords(char *filename, int fluidlike, int snap){
 /* Function:    writeCoords
  * -------------------------
  * Writes the position, radius, and type data for all N
@@ -506,52 +530,69 @@ void writeCoords(char *filename, int fluidlike){
  * fluidlike:  choice to print out fluid-like particles with reduced size for
  *             visualization purposes
  */
-        FILE *outfile = NULL;
-        double boxSize = L * sigma;
-        outfile = fopen(filename, "a");
-        if (outfile != NULL){
+    FILE *outfile = NULL;
+    outfile = fopen(filename, "a");
+    if (outfile != NULL) {
+        switch (output_filetype) {
+            case 0:
                 fprintf(outfile, "&%d\n", N);
-                fprintf(outfile, "%.12lf %.12lf %.12lf\n", boxSize, boxSize, boxSize);
+                fprintf(outfile, "%.12lf %.12lf %.12lf\n", boxx * sigma, boxy * sigma, boxz * sigma);
                 switch (fluidlike){
-                        case 0:
-                                for (int i = 0; i < N; i++){
-                                        fprintf(outfile,
-                                        "%c %.12lf %.12lf %.12lf %.12lf\n",
-                                        particles[i].type,
-                                        particles[i].x * sigma,
-                                        particles[i].y * sigma,
-                                        particles[i].z * sigma,
-                                        particles[i].r * sigma
-                                        );
-                                }
-                                break;
-                        case 1:
-                                for (int i = 0; i < N; i++){
-                                        if (particles[i].type == 'a'){
-                                                fprintf(outfile,
-                                                        "%c %.12lf %.12lf %.12lf %.12lf\n",
-                                                        particles[i].type,
-                                                        particles[i].x * sigma,
-                                                        particles[i].y * sigma,
-                                                        particles[i].z * sigma,
-                                                        particles[i].r * sigma / 5.0f
-                                                        );
-                                        }
-                                        else{
-                                                fprintf(outfile,
-                                                        "%c %.12lf %.12lf %.12lf %.12lf\n",
-                                                        particles[i].type,
-                                                        particles[i].x * sigma,
-                                                        particles[i].y * sigma,
-                                                        particles[i].z * sigma,
-                                                        particles[i].r * sigma
-                                                        );
-                                        }
-                                }
-                                break;
+                    case 0:
+                        for (int i = 0; i < N; i++){
+                            fprintf(outfile,
+                                "%c %.12lf %.12lf %.12lf %.12lf\n",
+                                particles[i].type,
+                                particles[i].x * sigma,
+                                particles[i].y * sigma,
+                                particles[i].z * sigma,
+                                particles[i].r * sigma
+                                );
+                        }
+                        break;
+                    case 1:
+                        for (int i = 0; i < N; i++){
+                            if (particles[i].type == 'a'){
+                                fprintf(outfile,
+                                    "%c %.12lf %.12lf %.12lf %.12lf\n",
+                                    particles[i].type,
+                                    particles[i].x * sigma,
+                                    particles[i].y * sigma,
+                                    particles[i].z * sigma,
+                                    particles[i].r * sigma / 5.0f
+                                    );
+                            }
+                            else{
+                                fprintf(outfile,
+                                    "%c %.12lf %.12lf %.12lf %.12lf\n",
+                                    particles[i].type,
+                                    particles[i].x * sigma,
+                                    particles[i].y * sigma,
+                                    particles[i].z * sigma,
+                                    particles[i].r * sigma
+                                    );
+                            }
+                        }
+                        break;
                 }
-                fclose(outfile);
+                break;
+            case 1:
+                fprintf(outfile, "%d\n", N);
+                fprintf(outfile, "Snap %d Box %.12lf %.12lf %.12lf\n", snap, boxx, boxy, boxz);
+                for (int i = 0; i < N; i++) {
+                    fprintf(outfile,
+                    "%c %.12lf %.12lf %.12lf\n",
+                    particles[i].type,
+                    particles[i].x * sigma,
+                    particles[i].y * sigma,
+                    particles[i].z * sigma
+                    );
+                }
+                break;
         }
+        fclose(outfile);
+    }
+    else {printf("[clusterID] ERROR: Could not open output file %s\n", filename); exit(3);}
 }
 
 
@@ -582,9 +623,13 @@ int buildCL(int usecase){
                 // nCell goes up, i.e. more cells
                 // more memory is allocated to accomodate for increase in number of cells
                 {
-                        sCell1D = L / ((int) (L / sigma));
-                        nCell1D = (int) (L / sCell1D);
-                        nCell = nCell1D * nCell1D * nCell1D;
+                        sCellx = boxx / ((int) (boxx / sigma));
+                        nCellx = (int) (boxx / sCellx);
+                        sCelly = boxy / ((int) (boxy / sigma));
+                        nCelly = (int) (boxy / sCelly);
+                        sCellz = boxz / ((int) (boxz / sigma));
+                        nCellz = (int) (boxz / sCellz);
+                        nCell = nCellx * nCelly * nCellz;
                         free(CLTable);
                         CLTable = malloc(nCell * sizeof(**CLTable));
                         if (CLTable == NULL) {printf("error CL\n"); exit(EXIT_FAILURE);}
@@ -608,9 +653,13 @@ int buildCL(int usecase){
                 {
                         for (int i = 0; i < nCell; i++)
                                 CLTable[i] = NULL;
-                        sCell1D = L / ((int) (L / sigma));
-                        nCell1D = (int) (L / sCell1D);
-                        nCell = nCell1D * nCell1D * nCell1D;
+                        sCellx = boxx / ((int) (boxx / sigma));
+                        nCellx = (int) (boxx / sCellx);
+                        sCelly = boxy / ((int) (boxy / sigma));
+                        nCelly = (int) (boxy / sCelly);
+                        sCellz = boxz / ((int) (boxz / sigma));
+                        nCellz = (int) (boxz / sCellz);
+                        nCell = nCellx * nCelly * nCellz;
                         break;
                 }
                 default:
@@ -619,9 +668,9 @@ int buildCL(int usecase){
         for (int i = 0; i < N; i++)
         {
                 Particle *one = particles+i;
-                int u = one->x / sCell1D;
-                int v = one->y / sCell1D;
-                int w = one->z / sCell1D;
+                int u = one->x / sCellx;
+                int v = one->y / sCelly;
+                int w = one->z / sCellz;
                 int index = retrieveIndex(u, v, w);
                 one->CLindex = index;
                 one->prev = NULL;
@@ -650,9 +699,9 @@ int retrieveIndex(int u, int v, int w){
  * return:     index of the CL in the table of CLs
  */
         int index = 0;
-        index = (w + 2 * nCell1D) % nCell1D * nCell1D * nCell1D
-                + (v + 2 * nCell1D) % nCell1D * nCell1D
-                + (u + 2 * nCell1D) % nCell1D;
+        index = (w + 2 * nCellz) % nCellz * nCelly * nCellx
+                + (v + 2 * nCelly) % nCelly * nCellx
+                + (u + 2 * nCellx) % nCellx;
         return index;
 }
 
@@ -702,9 +751,9 @@ void build_nblist(int method){
                        di;
 
                 // finding to which cell belongs the current particle
-                int a = particles[p].x / sCell1D;
-                int b = particles[p].y / sCell1D;
-                int c = particles[p].z / sCell1D;
+                int a = particles[p].x / sCellx;
+                int b = particles[p].y / sCelly;
+                int c = particles[p].z / sCellz;
         
                 // initializes number of nearest neighbours for particle `p` to 0
                 blist[p].n = 0;
@@ -721,7 +770,7 @@ void build_nblist(int method){
                 for (int i = a-2; i < a+3; i++){
                         for (int j = b-2; j < b+3; j++){
                                 for (int k = c-2; k < c+3; k++){
-                                        if ((!PBC) && ((i > nCell1D) || (i < 0) || (j > nCell1D) || (j < 0) || (k > nCell1D) || (k < 0))) continue;
+                                        if ((!PBC) && ((i > nCellx) || (i < 0) || (j > nCelly) || (j < 0) || (k > nCellz) || (k < 0))) continue;
                                         cellIndex = retrieveIndex(i,j,k);
                                         current = CLTable[cellIndex];
                                         while (current != NULL && numposnb <= N){
@@ -736,9 +785,9 @@ void build_nblist(int method){
                                                 dy = particles[p].y - current->y;
                                                 dz = particles[p].z - current->z;
                                                 // applying NIC
-                                                dx = dx - L * rint(dx / L);
-                                                dy = dy - L * rint(dy / L);
-                                                dz = dz - L * rint(dz / L);
+                                                dx = dx - boxx * rint(dx / boxx);
+                                                dy = dy - boxy * rint(dy / boxy);
+                                                dz = dz - boxz * rint(dz / boxz);
                                                 // computes squared distance between two particles
                                                 d = dx * dx + dy * dy + dz * dz;
                                                 // saves neighbour data
@@ -1245,7 +1294,7 @@ int calc_clusters(int* conn, compl* orderp){
                         logBook->size[logBook->bookmark] = size[i];
                         logBook->qt[logBook->bookmark] = 1;
                         logBook->bookmark++;
-                        Nn[size[i]] += 1.0f;
+                        Nn[size[i]] += 1.0f / (double) N;
                 }
                 else if (size[i] != 0){
                         unread = 1;
@@ -1260,7 +1309,7 @@ int calc_clusters(int* conn, compl* orderp){
                                 logBook->qt[logBook->bookmark] = 1;
                                 logBook->bookmark++;
                         }
-                        Nn[size[i]] += 1.0f;
+                        Nn[size[i]] += 1.0f / (double) N;
                 }
         }
         
@@ -1299,7 +1348,7 @@ void saveDGndata(void){
         if (DGnfile != NULL){
                 for (int i = 0; i < N; i++){
                         if (Nn[i] > 0.0f){
-                                fprintf(DGnfile, "%d\t%.12lf\n", i, -log(Nn[i] / (double) snapshot_count / (double) N));
+                                fprintf(DGnfile, "%d\t%.12lf\n", i, -log(Nn[i] / (double) snapshot_count));
                         }
                 }
                 fclose(DGnfile);
@@ -1312,8 +1361,7 @@ void saveDGndata(void){
 
 //    MAIN
 // ==========
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
         // CPU TIME MEASUREMENT | START
         struct timespec beginc, endc;
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &beginc);
@@ -1341,12 +1389,20 @@ int main(int argc, char *argv[])
 
         // OUTPUT
         if (save_movie) {
+            if (output_filetype == 0) {
                 if (sprintf(movie_filename, "./movie.sph") < 0){
-                        printf("[clusterID] Could not write string. Exit.\n");
-                        exit(0);
+                    printf("[clusterID] Could not write string. Exit.\n");
+                    exit(3);
                 }
-                FILE* writefile = fopen(movie_filename, "w+");
-                if (writefile != NULL){fclose(writefile);}
+            }
+            else if (output_filetype == 1) {
+                if (sprintf(movie_filename, "./movie.xyz") < 0) {
+                    printf("[clusterID] Could not write string. Exit.\n");
+                    exit(3);
+                }
+            }
+            FILE* writefile = fopen(movie_filename, "w+");
+            if (writefile != NULL) fclose(writefile);
         }
 
         if (savelogs){
@@ -1371,14 +1427,17 @@ int main(int argc, char *argv[])
 
         // BODY
         FILE* initfile = fopen(input_filename, "r");
+        snap_count = 0;
         if (initfile != NULL){
                 initReading(initfile);
                 while (cursor_current < cursor_end-10){
                         readCoords(initfile);
                         buildCL(1);
                         findClusters();
-                        if (save_movie) writeCoords(movie_filename, 1);
+                        if (save_movie) writeCoords(movie_filename, 1, snap_count);
                         if (savelogs) saveLogBook();
+                        printf("[clusterID] Snapshot %d done.\n", snap_count);
+                        snap_count++;
                         // Freeing allocated memory before allocating again
                         free(particles);
                         free(connections);
